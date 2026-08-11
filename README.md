@@ -5,7 +5,7 @@
 The report is one self-contained page: the charts, the scorer, both pages of
 arithmetic, and the notebook, all embedded and downloadable.
 [Carousel PDF](slides/qdev-finetune-carousel.pdf) ·
-[Calculations](CALCULATIONS.txt) ·
+[Calculations](CALCULATIONS_FULL.txt) ·
 [Notebook](colab/QDev_Crew_Adapter.ipynb)
 
 ---
