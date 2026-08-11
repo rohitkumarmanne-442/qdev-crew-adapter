@@ -1,0 +1,421 @@
+
+  LoRA / QLoRA arithmetic for the QDev crew adapter
+  base: Mistral-7B-v0.3 architecture (zephyr-7b-beta), r = 16, alpha = 32
+
+  PART A  quantization       sections 1-6
+  PART B  low-rank adaptation sections 7-12
+  PART C  putting it together sections 13-15
+
+==============================================================================
+  1.  Why quantize at all
+==============================================================================
+
+  A parameter is just a number, and you choose how many bits to spend on it.
+  7,248,000,000 parameters, priced per precision:
+
+  precision    bits  bytes/param   model size   vs fp32
+  -----------------------------------------------------
+  float32        32         4.00       29.0 GB        1x
+  float16        16         2.00       14.5 GB        2x
+  int8            8         1.00        7.2 GB        4x
+  nf4             4         0.50        3.6 GB        8x
+
+  That is the entire motivation. Same weights, fewer bits each, and the model
+  goes from "needs a data centre" to "fits on a rented GPU".
+
+
+==============================================================================
+  2.  int8 quantization, worked by hand
+==============================================================================
+
+  Map a real range onto an integer grid.
+
+      scale       s = (x_max - x_min) / (q_max - q_min)
+      zero point  z = the real value that lands on integer 0
+      quantize    q = round((x - z) / s)
+      dequantize  x_hat = s*q + z
+
+  For x in [-1, 1] onto int8 codes -127 .. 128:
+
+      s = (1 - (-1)) / (128 - (-127))
+        = 2 / 255
+        = 0.00784314
+
+      z = -0.003922          (symmetric: zero maps to zero)
+
+           x    q = round((x-z)/s)    x_hat = s*q + z   abs error
+  ---------------------------------------------------------------
+      0.7500                    96           0.749020    0.000980
+      0.1234                    16           0.121569    0.001831
+     -0.5000                   -63          -0.498039    0.001961
+      0.0039                     1           0.003922    0.000022
+     -0.9999                  -127          -1.000000    0.000100
+
+  The error is bounded by half a step: s/2 = 0.003922.
+  That is the guarantee. Nothing you quantize into this grid can be off by
+  more than 0.003922, and on average it is about half that again.
+
+
+==============================================================================
+  3.  Blockwise quantization, on eight real weights
+==============================================================================
+
+  One scale for a whole 7B tensor would be dominated by its single largest
+  value. So quantization is done per BLOCK, with its own absmax:
+
+      absmax = max(|w|) over the block
+      each weight is normalised to w / absmax, in [-1, 1]
+      then snapped to the nearest level of a 16-entry code book
+
+  Our eight weights:
+
+      +0.0031
+      -0.0142
+      +0.0087
+      -0.0009
+      +0.0410
+      -0.0056
+      +0.0021
+      -0.0198
+
+      absmax = 0.0410
+
+  Normalised (w / absmax), which is what actually gets quantized:
+
+      +0.0031 / 0.0410 = +0.0756
+      -0.0142 / 0.0410 = -0.3463
+      +0.0087 / 0.0410 = +0.2122
+      -0.0009 / 0.0410 = -0.0220
+      +0.0410 / 0.0410 = +1.0000
+      -0.0056 / 0.0410 = -0.1366
+      +0.0021 / 0.0410 = +0.0512
+      -0.0198 / 0.0410 = -0.4829
+
+==============================================================================
+  4.  NF4 vs int4 on those same eight weights
+==============================================================================
+
+  Four bits gives 16 slots. The only question is where to put them.
+
+  int4, absmax scaling: evenly spaced, scale = absmax/7, codes -7 .. +7
+
+      -1.000  -0.857  -0.714  -0.571  -0.429  -0.286  -0.143  +0.000
+      +0.143  +0.286  +0.429  +0.571  +0.714  +0.857  +1.000
+
+  NF4: 16 levels at the equal-probability quantiles of a normal
+
+      -1.000  -0.696  -0.525  -0.395  -0.284  -0.185  -0.091  +0.000
+      +0.080  +0.161  +0.246  +0.338  +0.441  +0.563  +0.723  +1.000
+
+  Notice NF4's levels bunch up near zero and thin out at the tails. That is
+  the whole idea: each level carries 6.25% of the
+  probability mass (1/16), so resolution follows where the weights actually
+  are instead of being spread evenly over a range they mostly do not occupy.
+
+  Snapping our block with each code book:
+
+           w    int4 recon      |err|     NF4 recon      |err|
+  ------------------------------------------------------------
+     +0.0031      +0.00586    0.00276      +0.00326    0.00016
+     -0.0142      -0.01171    0.00249      -0.01619    0.00199
+     +0.0087      +0.00586    0.00284      +0.01009    0.00139
+     -0.0009      +0.00000    0.00090      +0.00000    0.00090
+     +0.0410      +0.04100    0.00000      +0.04100    0.00000
+     -0.0056      -0.00586    0.00026      -0.00373    0.00187
+     +0.0021      +0.00000    0.00210      +0.00326    0.00116
+     -0.0198      -0.01757    0.00223      -0.02153    0.00173
+
+      int4  mean abs error = 0.001696    rmse = 0.002004
+      NF4   mean abs error = 0.001150    rmse = 0.001349
+
+  On eight weights this is anecdote, not evidence. Measured properly over
+  131,072 samples in blocks of 64, NF4's mean squared error is 14.6 % lower
+  than int4's, and the margin held across sigmas.
+
+  Two traps, both of which gave me a wrong answer first time:
+    - one block of 64 weights is pure noise. You need ~50k+ to measure this.
+    - the int4 baseline must include an exact zero level. Space 16 levels
+      evenly with no zero and you beat a strawman, not real int4.
+
+
+==============================================================================
+  5.  Double quantization: quantizing the quantizers
+==============================================================================
+
+  Every block of 64 weights needs its own absmax, stored as fp32. That scale
+  is overhead on top of the 4 bits per weight:
+
+      32 bits / 64 weights = 0.500 bits per weight
+
+  Double quantization stores those absmax values as int8, and adds one fp32
+  scale per 256 of them:
+
+      8/64  = 0.125000        the int8 absmax
+    + 32/(64 x 256)           the scale for those
+      = 0.126953 bits per weight
+
+      saved = 0.500 - 0.127
+            = 0.373 bits per weight
+
+  On 7.25B parameters:
+
+      7,248,000,000 x 0.373 bits / 8 = 0.34 GB saved
+
+  So the true cost of a 4-bit weight is not 4 bits, it is
+  4 + 0.127 = 4.127 bits.
+  Small in percentage terms, and the difference between fitting and not when
+  you are 100 MB short. I was 73 MB short on the LoRA arm and lost the run.
+
+
+==============================================================================
+  6.  Paged optimizers
+==============================================================================
+
+  Adam keeps two moments per TRAINABLE parameter. In fp32 that is 8 bytes each:
+
+      41,943,040 x 8 bytes = 320 MB
+
+  In 8-bit it is 2 bytes each:
+
+      41,943,040 x 2 bytes = 80 MB
+
+      saved = 320 - 80 = 240 MB
+
+  "Paged" means those states live in unified memory and spill to host RAM
+  under pressure instead of raising out-of-memory. The saving is real: my LoRA
+  run died asking for 168 MB with 95 MB free, a 73 MB shortfall, and 240 MB is
+  exactly what this switch returns.
+
+
+==============================================================================
+  7.  LoRA, the textbook square case
+==============================================================================
+
+  Fine-tuning learns an update dW and adds it to the frozen weight W:
+
+      W' = W + dW
+
+  dW has the same shape as W, so training it costs as much as the model. The
+  LoRA claim is that dW has low intrinsic rank, and can be factored:
+
+      dW  ~  A @ B      A is (d x r),  B is (r x d),  r << d
+
+  Worked for a 512 x 512 matrix at rank 8:
+
+  dW is (512 x 512)        -> 262,144 parameters
+  A  is (512 x 8)        -> 4,096
+  B  is (8 x 512)        -> 4,096
+  ----------------------------------------------
+  LoRA trains A + B       -> 8,192
+  reduction               -> 32x   (3.125% of the full update)
+  parameters not trained  -> 253,952
+
+  The shape of the saving: you replace d x d with r x (d + d). Quadratic in d
+  becomes linear in d. The bigger the matrix, the better the trade.
+
+
+==============================================================================
+  8.  The real shapes LoRA attaches to
+==============================================================================
+
+  hidden size          d = 4,096
+  layers               L = 32
+  attention heads          32
+  key/value heads          8      <- grouped-query attention
+  head dim                 4096 / 32 = 128
+  MLP inner            f = 14,336
+
+  Because there are 8 kv heads and not 32, k_proj and
+  v_proj are NOT square. They project d -> kv_heads x head_dim:
+
+      8 x 128 = 1024
+
+  Missing this is the single most common way a LoRA parameter estimate comes
+  out wrong, usually about 15 percent too high.
+
+  projection      d_in    d_out
+  -----------------------------
+  q_proj         4,096    4,096
+  k_proj         4,096    1,024
+  v_proj         4,096    1,024
+  o_proj         4,096    4,096
+  gate_proj      4,096   14,336
+  up_proj        4,096   14,336
+  down_proj     14,336    4,096
+
+==============================================================================
+  9.  Trainable parameters per matrix
+==============================================================================
+
+      A is d_in x r        B is r x d_out        so A + B = r x (d_in + d_out)
+
+  Worked for q_proj, the square one:
+
+      A: 4,096 x 16 = 65,536
+      B: 16 x 4,096 = 65,536
+      total  = 131,072   vs a full update of
+               4,096 x 4,096 = 16,777,216
+      ratio  = 128x fewer
+
+  And for k_proj, where GQA makes it rectangular:
+
+      A: 4,096 x 16 = 65,536
+      B: 16 x 1,024 = 16,384
+      total  = 81,920
+
+  projection       full update    LoRA A+B    ratio
+  -------------------------------------------------
+  q_proj            16,777,216     131,072     128x
+  k_proj             4,194,304      81,920      51x
+  v_proj             4,194,304      81,920      51x
+  o_proj            16,777,216     131,072     128x
+  gate_proj         58,720,256     294,912     199x
+  up_proj           58,720,256     294,912     199x
+  down_proj         58,720,256     294,912     199x
+
+==============================================================================
+  10.  Totalling it across the model
+==============================================================================
+
+  per layer, all seven projections           1,310,720
+  x 32 layers                                 41,943,040   <- TRAINABLE
+
+  total model parameters                 7,248,000,000
+  fraction trained    41,943,040 / 7,248,000,000
+                                                 = 0.5787 %
+  reduction                                        173x fewer
+
+  CONFIRMED ON THE GPU. The L4 run printed:
+      trainable 41,943,040 / 7,283,675,136 = 0.5758%
+  Predicted 41,943,040, measured 41,943,040: exact match.
+  The percentage differs by 0.0028 points only
+  because the preset's parameter count is rounded. The trainable count is exact.
+
+
+==============================================================================
+  11.  Choosing r
+==============================================================================
+
+  r buys capacity and costs parameters, linearly. Same model, same targets:
+
+      r       trainable   % of model   adapter (bf16)
+  ---------------------------------------------------
+      4      10,485,760      0.1447%            20 MB
+      8      20,971,520      0.2893%            40 MB
+     16      41,943,040      0.5787%            80 MB
+     32      83,886,080      1.1574%           160 MB
+     64     167,772,160      2.3147%           320 MB
+    128     335,544,320      4.6295%           640 MB
+
+  Doubling r doubles the trainable count exactly, because every term is
+  r x (d_in + d_out). Rule of thumb for this size class: [8, 16, 32].
+  I used r = 16: enough capacity for seven task formats, small enough that the
+  adapter still ships as one 80 MB file.
+
+
+==============================================================================
+  12.  Why alpha exists
+==============================================================================
+
+  At inference the adapter is folded back in as
+
+      W' = W + (alpha / r) x A @ B
+             = W + (32 / 16) x A @ B
+             = W + 2 x A @ B
+
+  alpha/r is a fixed gain on the update. It exists so changing r does not
+  silently change how strongly the adapter speaks: raise r for capacity and
+  raise alpha with it to hold the scale. Merged this way the adapter costs
+  ZERO extra latency, because W' is just a weight matrix again.
+
+
+==============================================================================
+  13.  What the adapter weighs
+==============================================================================
+  41,943,040 x 2 bytes (bfloat16) =     80.0 MB
+  41,943,040 x 4 bytes (float32 ) =    160.0 MB
+
+  Against the base model on disk:
+      7,248,000,000 x 2 bytes = 13.5 GB
+
+  So one agent's specialisation ships as 80 MB. Seven
+  agents sharing one base is one 14 GB model plus seven small
+  files, not seven 14 GB models.
+
+
+==============================================================================
+  14.  Memory: full fine-tune vs LoRA vs QLoRA
+==============================================================================
+
+  Full fine-tune holds four things for EVERY parameter, plus an fp32 master
+  copy because bf16 alone loses too much precision in the optimiser step:
+
+      weights      7,248,000,000 x 2 bytes  =   14.5 GB
+      gradients    7,248,000,000 x 2 bytes  =   14.5 GB
+      optimiser    7,248,000,000 x 8 bytes  =   58.0 GB
+      master fp32  7,248,000,000 x 4 bytes  =   29.0 GB
+                                                ------
+                                                 116.0 GB
+
+  LoRA freezes the base, so gradients and optimiser state exist only for the
+  41,943,040 trainable parameters:
+
+      frozen base  =   14.5 GB
+      adapter      =   0.08 GB
+      grads        =   0.08 GB
+      optimiser    =   0.34 GB
+                     ------
+                       15.0 GB
+
+  QLoRA also stores the frozen base in 4-bit NF4:
+
+      frozen base  =    3.6 GB
+      quant consts =   0.12 GB
+      adapter      =   0.08 GB
+      grads + opt  =   0.42 GB
+                     ------
+                        4.2 GB      27x less than full
+
+  CONFIRMED ON THE GPU. Resident memory after load, same card, same adapter:
+      QLoRA (NF4 base)    4.9 GiB
+      LoRA  (bf16 base)  13.7 GiB
+  and at a 12,288-token window the bf16 arm ran out of memory on a 22 GB L4,
+  twice, at step 6 of 156. It only fit at 8,192.
+
+
+==============================================================================
+  15.  What it bought, on real work
+==============================================================================
+
+  Scored on 74 held-out prompts across all seven agents, of which 18 are real
+  production artifacts from the platform, replayed through the exact prompt
+  builders that run in production. Deterministic offline scorer, no judge
+  model, greedy decoding, identical eval for every arm.
+
+      crew score, overall        0.528  ->  0.907      +0.380   (1.7x)
+      on real production work    0.617  ->  0.954      +0.337
+      responses that parsed      44/74  ->  71/74
+
+      Brain   code review        0.000  ->  1.000   was prose 8 times out of 8
+      Scooby  bug filing         0.250  ->  1.000
+      Velma   test authoring     0.272  ->  0.844
+      Perry   release plans      0.777  ->  1.000
+      Phineas story drafting     0.824  ->  1.000
+
+  Cost: 80 MB of adapter, $28.86 of teacher generation,
+  and 17 hours of L4 time:
+
+      baseline eval        2.0 h
+      QLoRA training       5.7 h
+      QLoRA eval           2.4 h
+      LoRA training        4.4 h
+      LoRA eval            2.6 h
+                          -----
+                           17.1 h
+
+  Note that evaluation cost more than the QLoRA training did. Measuring three
+  arms honestly on 74 rows, at real generation ceilings, is the expensive part
+  and it is the part usually skipped.
+
+==============================================================================
+

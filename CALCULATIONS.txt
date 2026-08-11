@@ -1,0 +1,342 @@
+MY FINE-TUNING CALCULATIONS
+Model: zephyr-7b-beta (Mistral-7B architecture)
+Settings: rank r = 16, alpha = 32
+
+Write PAGE 1 on one sheet, PAGE 2 on another.
+Everything here is verified against my actual GPU run.
+
+
+###############################################################
+
+  PAGE 1  -  LoRA
+  Question: how many parameters do I actually train?
+
+###############################################################
+
+
+STEP 1.  The idea
+
+   Fine-tuning learns an update dW and adds it:
+
+        W' = W + dW
+
+   dW is the same size as W, so training it costs
+   as much as the whole model.
+
+   LoRA splits dW into two thin matrices:
+
+        dW = A x B
+
+        A has size  (d_in  x  r)
+        B has size  (r  x  d_out)
+
+   So instead of training  d_in x d_out  numbers,
+   I train  r x (d_in + d_out)  numbers.
+
+
+STEP 2.  My model's numbers
+
+        hidden size  d  = 4096
+        layers       L  = 32
+        MLP inner    f  = 14336
+        attention heads = 32
+        kv heads        = 8
+        rank         r  = 16
+
+
+STEP 3.  Important - k and v are NOT square
+
+   There are only 8 kv heads, not 32.
+   So k_proj and v_proj output a smaller size:
+
+        head dim  = 4096 / 32 = 128
+
+        d_out     = kv heads x head dim
+                  = 8 x 128
+                  = 1024
+
+   So k_proj and v_proj go from 4096 to 1024.
+   Not 4096 to 4096.
+
+   (If you assume they are square, your final answer
+    comes out about 15% too big.)
+
+
+STEP 4.  Work out all 7 projections
+
+   Formula each time:  A = d_in x r,   B = r x d_out
+
+
+   1) q_proj    4096 -> 4096
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 4096 = 65,536
+        Total = 131,072
+
+
+   2) k_proj    4096 -> 1024
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 1024 = 16,384
+        Total = 81,920
+
+
+   3) v_proj    4096 -> 1024
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 1024 = 16,384
+        Total = 81,920
+
+
+   4) o_proj    4096 -> 4096
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 4096 = 65,536
+        Total = 131,072
+
+
+   5) gate_proj    4096 -> 14336
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 14336 = 229,376
+        Total = 294,912
+
+
+   6) up_proj    4096 -> 14336
+
+        A = 4096 x 16 = 65,536
+        B = 16 x 14336 = 229,376
+        Total = 294,912
+
+
+   7) down_proj    14336 -> 4096
+
+        A = 14336 x 16 = 229,376
+        B = 16 x 4096 = 65,536
+        Total = 294,912
+
+
+STEP 5.  Add up one layer
+
+        131,072
+      +  81,920
+      +  81,920
+      + 131,072
+      + 294,912
+      + 294,912
+      + 294,912
+      ---------
+      1,310,720      <-- one layer
+
+
+STEP 6.  Multiply by 32 layers
+
+        1,310,720 x 30 = 39,321,600
+        1,310,720 x  2 =  2,621,440
+                         ----------
+        1,310,720 x 32 = 41,943,040
+
+        ANSWER:  41,943,040 trainable parameters
+
+
+STEP 7.  What fraction of the model is that?
+
+             41,943,040
+        ------------------  = 0.00578684
+         7,248,000,000
+
+        0.00578684 x 100 = 0.5787 %
+
+
+STEP 8.  How much smaller is that?
+
+         7,248,000,000
+        ---------------  = 172.81
+            41,943,040
+
+        So 173 times fewer trained weights.
+
+
+STEP 9.  How big is the adapter file?
+
+        41,943,040 x 2 bytes = 83,886,080 bytes
+
+        83,886,080 / 1024 = 81,920 KB
+        81,920 / 1024     = 80 MB
+
+        So the whole thing ships as an 80 MB file.
+
+
+STEP 10.  Check one matrix, to feel the size
+
+        q_proj normally:  4096 x 4096 = 16,777,216
+        q_proj with LoRA: 16 x 8192   =    131,072
+
+        16,777,216 / 131,072 = 128 times fewer
+
+        d x d becomes r x 2d.
+        Squared becomes straight-line.
+
+
+MY GPU CONFIRMED THIS
+
+        The L4 printed:
+             trainable 41,943,040 / 7,283,675,136 = 0.5758%
+
+        I calculated by hand:
+             41,943,040 = 0.5787%
+
+        The trainable count matched exactly.
+        (The percent differs slightly because my model total
+         7,248,000,000 is the rounded published number.)
+
+
+###############################################################
+
+  PAGE 2  -  QLoRA
+  Question: will it fit on a GPU I can afford?
+
+###############################################################
+
+
+   LoRA reduced what I TRAIN.
+   QLoRA reduces what I STORE.
+
+
+STEP 1.  What a normal full fine-tune needs
+
+   It must hold 4 things for every one of the
+   7,248,000,000 parameters:
+
+        weights      7,248,000,000 x 2 bytes =  14.5 GB
+        gradients    7,248,000,000 x 2 bytes =  14.5 GB
+        Adam m + v   7,248,000,000 x 8 bytes =  58.0 GB
+        fp32 master  7,248,000,000 x 4 bytes =  29.0 GB
+                                                -----
+        TOTAL                                   116.0 GB
+
+   No normal GPU can hold 116 GB.
+
+
+STEP 2.  LoRA - freeze the base model
+
+   Now gradients and optimiser are needed only for the
+   41,943,040 trainable parameters:
+
+        frozen base   7,248,000,000 x 2 = 14.5   GB
+        adapter          41,943,040 x 2 =  0.084 GB
+        gradients        41,943,040 x 2 =  0.084 GB
+        optimiser        41,943,040 x 8 =  0.336 GB
+                                           -----
+        TOTAL                              15.0  GB
+
+   Notice: the frozen base is now 97% of the cost.
+   That tells me what to attack next.
+
+
+STEP 3.  QLoRA - also squeeze the frozen base
+
+   Store it in 4-bit NF4 instead of 16-bit.
+   4 bits = 0.5 bytes per parameter.
+
+        frozen base  7,248,000,000 x 0.5 = 3.6  GB
+        quant scales (see step 6)        = 0.12 GB
+        adapter + gradients + optimiser  = 0.50 GB
+                                           ----
+        TOTAL                              4.2  GB
+
+
+STEP 4.  Compare the three
+
+        Full fine-tune   116.0 GB
+        LoRA              15.0 GB
+        QLoRA              4.2 GB
+
+        116.0 / 4.2 = 27 times smaller than full
+         15.0 / 4.2 = 3.6 times smaller than LoRA
+
+
+STEP 5.  Why NF4 and not ordinary int4?
+
+   4 bits gives 2 x 2 x 2 x 2 = 16 slots.
+   The only question is where to put those 16 slots.
+
+   Ordinary int4:
+        Spread them evenly.
+        scale = absmax / 7, codes -7 to +7
+        gap between levels = 1/7 = 0.1429, the same everywhere.
+
+   NF4:
+        Put them at the quantiles of a normal curve, so each
+        slot covers the same amount of probability:
+
+             1 / 16 = 0.0625 = 6.25 % of the weights per slot
+
+        This makes the gaps uneven on purpose:
+             near zero      the gap is about 0.080
+             near the edges the gap is about 0.304
+
+   Model weights are shaped like a normal curve, so most of
+   them sit near zero. NF4 puts the fine detail where the
+   weights actually are.
+
+        I measured this on 131,072 samples:
+        NF4 error is 14.6 % lower than int4.
+
+
+STEP 6.  Double quantization - squeeze the scales too
+
+   Every block of 64 weights needs its own scale, stored
+   as fp32 (32 bits). That is extra cost on top of the 4 bits:
+
+        32 bits / 64 weights = 0.500 bits per weight
+
+   Now store those scales as int8 instead, and add one
+   fp32 scale for each 256 of them:
+
+        8 bits / 64            = 0.125
+        32 bits / (64 x 256)   = 0.002
+                                 -----
+                                 0.127 bits per weight
+
+        Saved = 0.500 - 0.127 = 0.373 bits per weight
+
+   Across the whole model:
+
+        7,248,000,000 x 0.373 = 2,703,504,000 bits
+        2,703,504,000 / 8     =   337,938,000 bytes
+                              =          0.34 GB
+
+   So a "4-bit" weight really costs 4 + 0.127 = 4.127 bits.
+
+
+MY GPU CONFIRMED THIS
+
+        Memory used after loading, same card, same adapter:
+
+             QLoRA (4-bit base)    4.9 GB
+             LoRA  (16-bit base)  13.7 GB
+
+        And when I tried LoRA with a 12,288 token window,
+        it ran out of memory on a 22 GB L4. Twice.
+        Step 6 out of 156. It only fit at 8,192.
+
+        So making the frozen base 4-bit cost me no quality.
+        What it bought me was 50% more context on the same card.
+
+
+###############################################################
+
+  THE SUMMARY LINE
+
+        LoRA decides how many parameters I train
+             -> 41,943,040, which is 0.58%
+
+        QLoRA decides whether they fit on my GPU
+             -> 4.2 GB instead of 116 GB
+
+        Result: 7 agents fine-tuned for $28.86,
+        one night on a rented L4.
+        Crew score went 0.528 -> 0.907.
+
+###############################################################

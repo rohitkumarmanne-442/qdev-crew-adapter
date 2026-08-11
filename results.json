@@ -1,0 +1,354 @@
+{
+  "baseline": {
+    "tasks": {
+      "bug": {
+        "n": 8,
+        "emit_rate": 0.25,
+        "schema": 0.25,
+        "enums": 0.25,
+        "rigor": 0.25,
+        "clean": 0.25,
+        "score": 0.25
+      },
+      "custom": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "dev": {
+        "n": 8,
+        "emit_rate": 0.625,
+        "schema": 0.625,
+        "enums": 0.625,
+        "rigor": 0.46875,
+        "clean": 0.625,
+        "score": 0.5703125
+      },
+      "devops": {
+        "n": 8,
+        "emit_rate": 0.875,
+        "schema": 0.6124999999999999,
+        "enums": 0.875,
+        "rigor": 0.8333333333333334,
+        "clean": 0.84375,
+        "score": 0.7769791666666667
+      },
+      "plan": {
+        "n": 18,
+        "emit_rate": 0.8333333333333334,
+        "schema": 0.8333333333333334,
+        "enums": 0.8333333333333334,
+        "rigor": 0.8055555555555556,
+        "clean": 0.8333333333333334,
+        "score": 0.8236111111111111
+      },
+      "qe": {
+        "n": 16,
+        "emit_rate": 0.4375,
+        "schema": 0.25,
+        "enums": 0.425,
+        "rigor": 0.13151041666666666,
+        "clean": 0.4375,
+        "score": 0.27165364583333335
+      },
+      "review": {
+        "n": 8,
+        "emit_rate": 0.0,
+        "schema": 0.0,
+        "enums": 0.0,
+        "rigor": 0.0,
+        "clean": 0.0,
+        "score": 0.0
+      }
+    },
+    "overall": {
+      "emit_rate": 0.5744047619047619,
+      "schema": 0.5101190476190476,
+      "enums": 0.5726190476190477,
+      "rigor": 0.4984499007936508,
+      "clean": 0.5699404761904762,
+      "score": 0.5275080605158731,
+      "n": 74
+    },
+    "extract_modes": {
+      "unparseable": 30,
+      "fenced": 2,
+      "embedded": 6,
+      "clean": 36
+    },
+    "by_slice": {
+      "real": {
+        "emit_rate": 0.75,
+        "schema": 0.5625,
+        "enums": 0.75,
+        "rigor": 0.53125,
+        "clean": 0.75,
+        "score": 0.6171875,
+        "n": 18
+      },
+      "gen": {
+        "emit_rate": 0.5357142857142857,
+        "schema": 0.49821428571428567,
+        "enums": 0.5321428571428571,
+        "rigor": 0.4735863095238095,
+        "clean": 0.53125,
+        "score": 0.5013355654761905,
+        "n": 56
+      }
+    },
+    "run": "baseline",
+    "base_model": "HuggingFaceH4/zephyr-7b-beta",
+    "elapsed_s": 7195,
+    "eval_dtype": "bfloat16",
+    "four_bit": false,
+    "n_rows": 74,
+    "gen_tokens": {
+      "plan": 1700,
+      "qe": 6700,
+      "dev": 12000,
+      "review": 2400,
+      "bug": 1300,
+      "devops": 2900,
+      "custom": 2700
+    },
+    "greedy": true
+  },
+  "qlora": {
+    "tasks": {
+      "bug": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "custom": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "dev": {
+        "n": 8,
+        "emit_rate": 0.75,
+        "schema": 0.375,
+        "enums": 0.75,
+        "rigor": 0.375,
+        "clean": 0.75,
+        "score": 0.50625
+      },
+      "devops": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "plan": {
+        "n": 18,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "qe": {
+        "n": 16,
+        "emit_rate": 0.9375,
+        "schema": 0.8125,
+        "enums": 0.9285714285714286,
+        "rigor": 0.7838541666666666,
+        "clean": 0.9375,
+        "score": 0.844438244047619
+      },
+      "review": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      }
+    },
+    "overall": {
+      "emit_rate": 0.9553571428571429,
+      "schema": 0.8839285714285714,
+      "enums": 0.9540816326530612,
+      "rigor": 0.8798363095238095,
+      "clean": 0.9553571428571429,
+      "score": 0.9072411777210885,
+      "n": 74
+    },
+    "extract_modes": {
+      "clean": 66,
+      "embedded": 5,
+      "unparseable": 3
+    },
+    "by_slice": {
+      "real": {
+        "emit_rate": 1.0,
+        "schema": 0.9375,
+        "enums": 0.9910714285714286,
+        "rigor": 0.9270833333333333,
+        "clean": 1.0,
+        "score": 0.9539434523809525,
+        "n": 18
+      },
+      "gen": {
+        "emit_rate": 0.9464285714285714,
+        "schema": 0.875,
+        "enums": 0.9464285714285714,
+        "rigor": 0.8697916666666667,
+        "clean": 0.9464285714285714,
+        "score": 0.8981770833333333,
+        "n": 56
+      }
+    },
+    "run": "qlora",
+    "base_model": "HuggingFaceH4/zephyr-7b-beta",
+    "elapsed_s": 8641,
+    "eval_dtype": "bfloat16",
+    "four_bit": false,
+    "n_rows": 74,
+    "gen_tokens": {
+      "plan": 1700,
+      "qe": 6700,
+      "dev": 12000,
+      "review": 2400,
+      "bug": 1300,
+      "devops": 2900,
+      "custom": 2700
+    },
+    "greedy": true
+  },
+  "lora": {
+    "tasks": {
+      "bug": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "custom": {
+        "n": 8,
+        "emit_rate": 0.875,
+        "schema": 0.875,
+        "enums": 0.875,
+        "rigor": 0.875,
+        "clean": 0.875,
+        "score": 0.875
+      },
+      "dev": {
+        "n": 8,
+        "emit_rate": 0.5,
+        "schema": 0.25,
+        "enums": 0.5,
+        "rigor": 0.25,
+        "clean": 0.5,
+        "score": 0.3375
+      },
+      "devops": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      },
+      "plan": {
+        "n": 18,
+        "emit_rate": 0.9444444444444444,
+        "schema": 0.9444444444444444,
+        "enums": 0.9444444444444444,
+        "rigor": 0.9444444444444444,
+        "clean": 0.9444444444444444,
+        "score": 0.9444444444444444
+      },
+      "qe": {
+        "n": 16,
+        "emit_rate": 0.8125,
+        "schema": 0.75,
+        "enums": 0.8125,
+        "rigor": 0.7395833333333334,
+        "clean": 0.8125,
+        "score": 0.7682291666666666
+      },
+      "review": {
+        "n": 8,
+        "emit_rate": 1.0,
+        "schema": 1.0,
+        "enums": 1.0,
+        "rigor": 1.0,
+        "clean": 1.0,
+        "score": 1.0
+      }
+    },
+    "overall": {
+      "emit_rate": 0.8759920634920635,
+      "schema": 0.8313492063492064,
+      "enums": 0.8759920634920635,
+      "rigor": 0.829861111111111,
+      "clean": 0.8759920634920635,
+      "score": 0.846453373015873,
+      "n": 74
+    },
+    "extract_modes": {
+      "clean": 62,
+      "unparseable": 9,
+      "embedded": 3
+    },
+    "by_slice": {
+      "real": {
+        "emit_rate": 0.875,
+        "schema": 0.8125,
+        "enums": 0.875,
+        "rigor": 0.8125,
+        "clean": 0.875,
+        "score": 0.834375,
+        "n": 18
+      },
+      "gen": {
+        "emit_rate": 0.875,
+        "schema": 0.8392857142857143,
+        "enums": 0.875,
+        "rigor": 0.8363095238095238,
+        "clean": 0.875,
+        "score": 0.8507440476190476,
+        "n": 56
+      }
+    },
+    "run": "lora",
+    "base_model": "HuggingFaceH4/zephyr-7b-beta",
+    "elapsed_s": 9231,
+    "eval_dtype": "bfloat16",
+    "four_bit": false,
+    "n_rows": 74,
+    "gen_tokens": {
+      "plan": 1700,
+      "qe": 6700,
+      "dev": 12000,
+      "review": 2400,
+      "bug": 1300,
+      "devops": 2900,
+      "custom": 2700
+    },
+    "greedy": true
+  }
+}
